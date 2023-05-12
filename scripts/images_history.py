@@ -5,14 +5,17 @@ import stat
 import gradio as gr
 import modules.extras
 import modules.ui
-from modules.shared import opts, cmd_opts
+from modules.shared import opts, cmd_opts,get_webui_username
+
 from modules import shared, scripts
 from modules import script_callbacks
 from pathlib import Path
 from typing import List, Tuple
 
 faverate_tab_name = "Favorites"
-tabs_list = ["txt2img", "img2img", "txt2img-grids", "img2img-grids", "Extras", faverate_tab_name, "Others"] #txt2img-grids and img2img-grids added by HaylockGrant
+# tabs_list = ["txt2img", "img2img", "txt2img-grids", "img2img-grids", "Extras", faverate_tab_name, "Others"] #txt2img-grids and img2img-grids added by HaylockGrant
+tabs_list = ["txt2img", "img2img", "Extras", faverate_tab_name] #txt2img-grids and img2img-grids added by HaylockGrant
+
 num_of_imgs_per_page = 0
 loads_files_num = 0
 path_recorder_filename = os.path.join(scripts.basedir(), "path_recorder.txt")
@@ -42,9 +45,10 @@ def reduplicative_file_move(src, dst):
         name = same_name_file(name, dst)
         shutil.move(src, os.path.join(dst, name))
 
-def save_image(file_name):
+def save_image(file_name,request:gr.Request):
+    username = shared.get_webui_username(request)
     if file_name is not None and os.path.exists(file_name):
-        reduplicative_file_move(file_name, opts.outdir_save)
+        reduplicative_file_move(file_name, opts.outdir_save+'/'+username)
         return "<div style='color:#999'>Moved to favorites</div>"
     else:
         return "<div style='color:#999'>Image not found (may have been already moved)</div>"
@@ -106,9 +110,11 @@ def get_all_images(dir_name, sort_by, keyword):
     filenames = [finfo[0] for finfo in fileinfos]
     return filenames
 
-def get_image_page(img_path, page_index, filenames, keyword, sort_by):
+def get_image_page(img_path, page_index, filenames, keyword, sort_by,request:gr.Request):
+    username = shared.get_webui_username(request)
+    print(f'current user:{username} is invoking get_image_page()')
     if page_index == 1 or page_index == 0 or len(filenames) == 0:
-        filenames = get_all_images(img_path, sort_by, keyword)
+        filenames = get_all_images(f'{img_path}/{username}', sort_by, keyword)
     page_index = int(page_index)
     length = len(filenames)
     max_page_index = length // num_of_imgs_per_page + 1
@@ -117,6 +123,7 @@ def get_image_page(img_path, page_index, filenames, keyword, sort_by):
     page_index = max_page_index if page_index > max_page_index else page_index
     idx_frm = (page_index - 1) * num_of_imgs_per_page
     image_list = filenames[idx_frm:idx_frm + num_of_imgs_per_page]
+    image_list_new = [(img, img.split('/')[-1] )for img in image_list]
     
     visible_num = num_of_imgs_per_page if  idx_frm + num_of_imgs_per_page < length else length % num_of_imgs_per_page 
     visible_num = num_of_imgs_per_page if visible_num == 0 else visible_num
@@ -124,7 +131,7 @@ def get_image_page(img_path, page_index, filenames, keyword, sort_by):
     load_info = "<div style='color:#999' align='center'>"
     load_info += f"{length} images in this directory, divided into {int((length + 1) // num_of_imgs_per_page  + 1)} pages"
     load_info += "</div>"
-    return filenames, page_index, image_list,  "", "",  "", visible_num, load_info
+    return filenames, page_index, image_list_new,  "", "",  "", visible_num, load_info
 
 def show_image_info(tabname_box, num, page_index, filenames):
     file = filenames[int(num) + int((page_index - 1) * num_of_imgs_per_page)]   
@@ -212,7 +219,8 @@ def create_tab(tabname):
                         next_page = gr.Button('Next Page')
                         end_page = gr.Button('End Page') 
                     history_gallery = gr.Gallery(show_label=False, elem_id=tabname + "_images_history_gallery").style(grid=opts.images_history_page_columns)
-                    with gr.Row() as delete_panel:
+                    ##hide by river
+                    with gr.Row(visible=False) as delete_panel:
                         with gr.Column(scale=1):
                             delete_num = gr.Number(value=1, interactive=True, label="delete next")
                         with gr.Column(scale=3):
@@ -221,13 +229,14 @@ def create_tab(tabname):
                 with gr.Column(): 
                     with gr.Row():  
                         sort_by = gr.Radio(value="date", choices=["path name", "date"], label="sort by")   
-                        keyword = gr.Textbox(value="", label="keyword")                 
+                        keyword = gr.Textbox(value="", label="keyword",visible=False)                 
                     with gr.Row():
-                        with gr.Column():
+                        with gr.Column(visible=False):#hide by river
                             img_file_info = gr.Textbox(label="Generate Info", interactive=False, lines=6)
                             img_file_name = gr.Textbox(value="", label="File Name", interactive=False)
                             img_file_time= gr.HTML()
-                    with gr.Row(elem_id=tabname + "_images_history_button_panel") as button_panel:
+                    #hide by river
+                    with gr.Row(elem_id=tabname + "_images_history_button_panel",visible=False) as button_panel:
                         if tabname != faverate_tab_name:
                             save_btn = gr.Button('Move to favorites')
                         try:
@@ -320,9 +329,9 @@ def on_ui_settings():
     shared.opts.add_option("images_history_page_rows", shared.OptionInfo(6, "Number of rows on the page", section=section))
     shared.opts.add_option("images_history_pages_perload", shared.OptionInfo(20, "Minimum number of pages per load", section=section))
 
-
-script_callbacks.on_ui_settings(on_ui_settings)
 script_callbacks.on_ui_tabs(on_ui_tabs)
+script_callbacks.on_ui_settings(on_ui_settings)
+
 
 #TODO:
 #recycle bin
