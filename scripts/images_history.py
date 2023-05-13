@@ -87,7 +87,11 @@ def delete_image(delete_num, name, filenames, image_index, visible_num):
 def traverse_all_files(curr_path, image_list) -> List[Tuple[str, os.stat_result]]:
     if curr_path == "":
         return image_list
-    f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
+    try:
+        f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
+    except Exception as e:
+        print(str(e))
+        return []
     for f_info in f_list:
         fname, fstat = f_info
         if os.path.splitext(fname)[1] in image_ext_list:
@@ -123,15 +127,14 @@ def get_image_page(img_path, page_index, filenames, keyword, sort_by,request:gr.
     page_index = max_page_index if page_index > max_page_index else page_index
     idx_frm = (page_index - 1) * num_of_imgs_per_page
     image_list = filenames[idx_frm:idx_frm + num_of_imgs_per_page]
-    image_list_new = [(img, img.split('/')[-1] )for img in image_list]
-    
+    image_list_w_label = [(img, img.split('/')[-1] )for img in image_list]
     visible_num = num_of_imgs_per_page if  idx_frm + num_of_imgs_per_page < length else length % num_of_imgs_per_page 
     visible_num = num_of_imgs_per_page if visible_num == 0 else visible_num
 
     load_info = "<div style='color:#999' align='center'>"
     load_info += f"{length} images in this directory, divided into {int((length + 1) // num_of_imgs_per_page  + 1)} pages"
     load_info += "</div>"
-    return filenames, page_index, image_list_new,  "", "",  "", visible_num, load_info
+    return filenames, page_index, image_list_w_label,  "", "",  "", visible_num, load_info
 
 def show_image_info(tabname_box, num, page_index, filenames):
     file = filenames[int(num) + int((page_index - 1) * num_of_imgs_per_page)]   
