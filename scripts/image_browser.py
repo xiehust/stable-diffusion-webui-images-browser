@@ -31,6 +31,12 @@ from pathlib import Path
 from typing import List, Tuple
 from itertools import chain
 from io import StringIO
+import boto3
+from botocore.exceptions import ClientError
+
+
+region_name = boto3.session.Session().region_name
+s3_client = boto3.client('s3', region_name=region_name)
 
 try:
     from scripts.wib import wib_db
@@ -96,7 +102,8 @@ def check_image_browser_active_tabs():
             shared.opts.save(shared.config_filename)
 
 favorite_tab_name = "Favorites"
-default_tab_options = ["txt2img", "img2img", "txt2img-grids", "img2img-grids", "Extras", favorite_tab_name, "Others"]
+# default_tab_options = ["txt2img", "img2img", "txt2img-grids", "img2img-grids", "Extras", favorite_tab_name, "Others"]
+default_tab_options = ["txt2img", "img2img", "Extras", favorite_tab_name, "Others"]
 check_image_browser_active_tabs()
 tabs_list = [tab.strip() for tab in chain.from_iterable(csv.reader(StringIO(opts.image_browser_active_tabs))) if tab] if hasattr(opts, "image_browser_active_tabs") else default_tab_options
 try:
@@ -113,6 +120,28 @@ path_maps = {
     "Extras": opts.outdir_samples or opts.outdir_extras_samples,
     favorite_tab_name: opts.outdir_save
 }
+
+def save_images_to_s3(full_fillnames,username):
+    # sagemaker_endpoint = shared.opts.sagemaker_endpoint
+    bucket_name = shared.get_default_sagemaker_bucket().replace('s3://','')
+
+    if bucket_name.endswith('/'):
+        bucket_name= bucket_name[:-1]
+    if bucket_name == '':
+        return 'Error, please configure a S3 bucket at settings page first'
+    folder_name = f"stable-diffusion-webui/generated/{username}/favorites"
+    try:
+        for i, fname in enumerate(full_fillnames):
+            filename = fname.split('/')[-1]
+            object_name = f"{folder_name}/{filename}"
+            # print (f'upload file [{i}]:{filename} to s3://{bucket_name}/{object_name}')
+            s3_client.upload_file(fname, bucket_name, object_name)
+
+    except ClientError as e:
+        print(e)
+        return e
+    return f"s3://{bucket_name}/{folder_name}"
+
 
 class ImageBrowserTab():
 
@@ -332,6 +361,7 @@ def ranking_filter_settings(page_index, turn_page_switch, ranking_filter):
     return page_index, turn_page_switch, gr.update(interactive=interactive), gr.update(interactive=interactive)
 
 def reduplicative_file_move(src, dst):
+    os.makedirs(dst, exist_ok=True)
     def same_name_file(basename, path):
         name, ext = os.path.splitext(basename)
         f_list = os.listdir(path)
@@ -377,12 +407,19 @@ def reduplicative_file_move(src, dst):
 def save_image(file_name, filenames, page_index, turn_page_switch, dest_path,request:gr.Request):
     username = shared.get_webui_username(request)
     if file_name is not None and os.path.exists(file_name):
+         # if save to favoriates
+        if dest_path.find(opts.outdir_save) > -1:
+            # print(f'{dest_path} -- {file_name} save to S3')
+            save_images_to_s3([file_name],username)
         reduplicative_file_move(file_name, dest_path+'/'+username)
         message = f"<div style='color:#999'>{copied_moved[opts.image_browser_copy_image]} to {dest_path}</div>"
         if not opts.image_browser_copy_image:
             # Force page refresh with checking filenames
             filenames = []
             turn_page_switch = -turn_page_switch
+       
+
+
     else:
         message = "<div style='color:#999'>Image not found (may have been already moved)</div>"
 
@@ -442,7 +479,12 @@ def traverse_all_files(curr_path, image_list, tab_base_tag_box, img_path_depth) 
     logger.debug(f"curr_path: {curr_path}")
     if curr_path == "":
         return image_list
-    f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
+    try:
+        f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
+    except Exception as e:
+        print(str(e))
+        return []
+    # f_list = [(os.path.join(curr_path, entry.name), entry.stat()) for entry in os.scandir(curr_path)]
     for f_info in f_list:
         fname, fstat = f_info
         if os.path.splitext(fname)[1] in image_ext_list:
@@ -1057,7 +1099,6 @@ def update_exif(img_file_name, key, value):
 
 def update_ranking(img_file_name, ranking_current, ranking, img_file_info):
     # ranking = None is different than ranking = "None"! None means no radio button selected. "None" means radio button called "None" selected.
-    print('--begin--',img_file_info)
     if ranking is None:
         return ranking_current, None, img_file_info
 
@@ -1066,7 +1107,6 @@ def update_ranking(img_file_name, ranking_current, ranking, img_file_info):
         wib_db.update_ranking(img_file_name, ranking)
         if opts.image_browser_ranking_pnginfo and any(img_file_name.endswith(ext) for ext in image_ext_list):
             img_file_info = update_exif(img_file_name, "Ranking", ranking)
-    print('--end--',img_file_info)
     return ranking, None, img_file_info
 
 def generate_image_reward(filenames, turn_page_switch, aes_filter_min, aes_filter_max):
@@ -1243,6 +1283,8 @@ def create_tab(tab: ImageBrowserTab, current_gr_tab: gr.Tab):
                                 except:
                                     pass
                                 sendto_openoutpaint = gr.Button("Send to openOutpaint", elem_id=f"{tab.base_tag}_image_browser_openoutpaint_btn", visible=openoutpaint)
+                            ##Hide controlnet by river
+                            controlnet=False
                             with gr.Row(visible=controlnet):
                                 sendto_controlnet_txt2img = gr.Button("Send to txt2img ControlNet", visible=controlnet)
                                 sendto_controlnet_img2img = gr.Button("Send to img2img ControlNet", visible=controlnet)
@@ -1269,6 +1311,7 @@ def create_tab(tab: ImageBrowserTab, current_gr_tab: gr.Tab):
                     with gr.Row(visible=False):
                         renew_page = gr.Button("Renew Page", elem_id=f"{tab.base_tag}_image_browser_renew_page")
                         visible_img_num = gr.Number()                     
+                        visible_img_num = gr.Number()                      
                         tab_base_tag_box = gr.Textbox(tab.base_tag)
                         image_index = gr.Textbox(value=-1, elem_id=f"{tab.base_tag}_image_browser_image_index")
                         set_index = gr.Button('set_index', elem_id=f"{tab.base_tag}_image_browser_set_index")
@@ -1367,6 +1410,18 @@ def create_tab(tab: ImageBrowserTab, current_gr_tab: gr.Tab):
         for item in opts.image_browser_hidden_components:
             hidden_component_map[item].visible = False
             override_hidden.add(hidden_component_map[item])
+
+    ##hide not used panels by river
+    open_folder_panel.visible = False
+    to_dir_panel.visible = False
+    exif_search_panel.visible = False
+    aesthetic_score_filter_panel.visible = False
+    ranking_filter_panel.visible = False
+    override_hidden.add(open_folder_panel)
+    override_hidden.add(to_dir_panel)
+    override_hidden.add(exif_search_panel)
+    override_hidden.add(aesthetic_score_filter_panel)
+    override_hidden.add(ranking_filter_panel)
 
     change_dir_outputs = [warning_box, main_panel, img_path_browser, path_recorder, load_switch, img_path, img_path_depth]
     img_path.submit(change_dir, inputs=[img_path, path_recorder, load_switch, img_path_browser, img_path_depth, img_path], outputs=change_dir_outputs, show_progress=opts.image_browser_show_progress)
@@ -1504,7 +1559,11 @@ def create_tab(tab: ImageBrowserTab, current_gr_tab: gr.Tab):
         show_progress=opts.image_browser_show_progress
     )
 
-    set_index.click(fn=lambda:(gr.update(visible=delete_panel not in override_hidden), gr.update(visible=button_panel not in override_hidden), gr.update(visible=ranking_panel not in override_hidden), gr.update(visible=to_dir_panel not in override_hidden), gr.update(visible=info_add_panel not in override_hidden)), inputs=None, outputs=hide_on_thumbnail_view, show_progress=opts.image_browser_show_progress)
+    set_index.click(fn=lambda:(gr.update(visible=delete_panel not in override_hidden), 
+                               gr.update(visible=button_panel not in override_hidden), 
+                               gr.update(visible=ranking_panel not in override_hidden),
+                                gr.update(visible=to_dir_panel not in override_hidden), 
+                                gr.update(visible=info_add_panel not in override_hidden)), inputs=None, outputs=hide_on_thumbnail_view, show_progress=opts.image_browser_show_progress)
 
     favorites_btn.click(save_image, inputs=[img_file_name, filenames, page_index, turn_page_switch, favorites_path], outputs=[collected_warning, filenames, page_index, turn_page_switch], show_progress=opts.image_browser_show_progress)
     img_file_name.change(img_file_name_changed, inputs=[img_file_name, favorites_btn, to_dir_btn], outputs=[ranking_current, ranking, collected_warning, favorites_btn, to_dir_btn], show_progress=opts.image_browser_show_progress)
@@ -1583,11 +1642,9 @@ def create_tab(tab: ImageBrowserTab, current_gr_tab: gr.Tab):
 def run_pnginfo(image, image_path, image_file_name):
     if image is None:
         return '', '', '', '', ''
-    print('image.info:',image.info)
     try:
         geninfo, items = images.read_info_from_image(image)
         items = {**{'parameters': geninfo}, **items}
-        print(f'read_info_from_image()={geninfo},{items}')
         info = ''
         for key, text in items.items():
             info += f"""
@@ -1607,7 +1664,6 @@ def run_pnginfo(image, image_path, image_file_name):
             with open(filename) as f:
                 for line in f:
                     geninfo += line
-            print(f'run_pnginfo(splitext)={geninfo}')
         except Exception:
             logger.warning(f"run_pnginfo: No EXIF in image or txt file")
 
