@@ -360,6 +360,14 @@ def ranking_filter_settings(page_index, turn_page_switch, ranking_filter):
     turn_page_switch = -turn_page_switch
     return page_index, turn_page_switch, gr.update(interactive=interactive), gr.update(interactive=interactive)
 
+def file_move_delete(src,dst):
+    shutil.copy(src, dst)
+    try:
+        file = Path(src)
+        file.unlink()
+    except Exception as e:
+        print ('delete file eror',str(e))
+
 def reduplicative_file_move(src, dst):
     os.makedirs(dst, exist_ok=True)
     def same_name_file(basename, path):
@@ -386,23 +394,27 @@ def reduplicative_file_move(src, dst):
             src_txt_exists = True
     if not os.path.exists(save_name):
         if opts.image_browser_copy_image:
-            shutil.copy2(src, dst)
+            shutil.copy(src, dst)
             if opts.image_browser_txt_files and src_txt_exists:
-                shutil.copy2(src_txt, dst)
+                shutil.copy(src_txt, dst)
         else:
-            shutil.move(src, dst)
+            # shutil.move(src, dst,copy_function = shutil.copy)
+            file_move_delete(src,dst)
             if opts.image_browser_txt_files and src_txt_exists:
-                shutil.move(src_txt, dst)
+                file_move_delete(src_txt,dst)
+                # shutil.move(src_txt, dst,copy_function = shutil.copy)
     else:
         name = same_name_file(name, dst)
         if opts.image_browser_copy_image:
-            shutil.copy2(src, os.path.join(dst, name))
+            shutil.copy(src, os.path.join(dst, name))
             if opts.image_browser_txt_files and src_txt_exists:
-                shutil.copy2(src_txt, totxt(os.path.join(dst, name)))
+                shutil.copy(src_txt, totxt(os.path.join(dst, name)))
         else:
-            shutil.move(src, os.path.join(dst, name))
+            # shutil.move(src, os.path.join(dst, name),copy_function = shutil.copy)
+            file_move_delete(src,os.path.join(dst, name))
             if opts.image_browser_txt_files and src_txt_exists:
-                shutil.move(src_txt, totxt(os.path.join(dst, name)))
+                # shutil.move(src_txt, totxt(os.path.join(dst, name)),copy_function = shutil.copy)
+                file_move_delete(src_txt,totxt(os.path.join(dst, name)))
 
 def save_image(file_name, filenames, page_index, turn_page_switch, dest_path,request:gr.Request):
     username = shared.get_webui_username(request)
